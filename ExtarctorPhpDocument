@@ -1,0 +1,161 @@
+<?php
+include 'vendor/autoload.php';
+/* 
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+/**
+ * @Author: Madan Gopal<br>
+ * @Description: This class contains all the functions used to Extract Images, Text etc from Uploaded Document.<br>
+ * @methods: getImageIndcies($src) <br> saveAllImages($indexes,$src,$fileName) <br> getDOCXText($source) <br> getPPTText($input_file) <br> getPDFImages($source) <br> getPDFText($src).
+ * 
+ */
+class DocumentExtractor{
+    
+       //------------------------------------------------------------------------------- 
+    /**
+     * @Author: Madan Gopal<br>
+     * @Description: Reads the file and returns the Indexs of the images in file.<br>
+     * @param <b>Type:</b> String $src<br> <b>Desc: </b> Takes source path of the file.
+     * @return array() Returns the array of indexs where Images are present in uploaded Document. If <b>NO</b> images are there, returns <b>EMPTY</b> array.
+     */
+    static function getImageIndcies($src) {
+		$ZipArchive = new ZipArchive;
+                $indexes = [ ];
+		if ( true === $ZipArchive->open( $src ) ) {
+			for ( $i = 0; $i < $ZipArchive->numFiles; $i ++ ) {
+				$zip_element = $ZipArchive->statIndex( $i );
+				if ( preg_match( "([^\s]+(\.(?i)(jpg|jpeg|png))$)", $zip_element['name'] ) ) {
+					$imagename                   = explode( '/', $zip_element['name'] );
+					$imagename                   = end( $imagename );
+					$indexes[ $imagename ] = $i;
+				}
+			}
+		}
+                return $indexes;
+	}
+    /**
+     * @Author: Madan Gopal<br>
+     * @Description: Extracts and saves images from the file at given indexes.<br.
+     * @param <b>Type:</b> array() $indexes<br> <b>Desc: </b> Takes indexs returned by extractImages()<br><b>Type:</b> String $src<br> <b>Desc: </b> Takes source path of the file.<br><b>Type:</b> String $fileName<br> <b>Desc: </b> Takes file name to append to Extracted image for processing.<br>
+     * @return String Returns file name of the last saved image. If <b>NO</b> images are there, returns <b>EMPTY</b> String.
+     */
+static function saveAllImages($indexes,$src,$fileName) {
+    $artifactsTempPath = Yii::app()->params['ArtifactSavePath'];
+    $returnData = array();
+    $thumbNailName = "";
+    $numberOfImages = 0;
+    $fileName = explode(".",$fileName);
+    $ext = $fileName[1];
+    $Name = $fileName[0];
+		if ( count( $indexes ) == 0 ) {
+                    $returnData = array();
+		}
+		foreach ( $indexes as $key => $index ) {
+			$zip = new ZipArchive;
+			if ( true === $zip->open( $src ) ) {
+				file_put_contents($artifactsTempPath."tempUploadThumbnails/".$Name.'_Temp'.$ext."-". $key, $zip->getFromIndex( $index ) );
+                                if(filesize($artifactsTempPath."tempUploadThumbnails/".$Name.'_Temp'.$ext."-" . $key) < 1000){
+                                   
+                                        unlink($artifactsTempPath."tempUploadThumbnails/".$Name.'_Temp'.$ext."-" . $key);
+                                    }else{
+                                        $thumbNailName = $Name.'_Temp'.$ext."-".$key;
+                                        $numberOfImages++;
+                                        $returnData = array("thumbNailName"=>$thumbNailName,"numberOfImages"=>$numberOfImages);
+                                    }
+			}
+			$zip->close();
+		}
+                return $returnData;
+	}
+   //---------------------------------------------------------------
+  static function getDOCXText($source){
+        $striped_content = '';
+        $content = '';
+        $zip = zip_open($source);
+        if (!$zip || is_numeric($zip)) return false;
+        while ($zip_entry = zip_read($zip)) {
+            if (zip_entry_open($zip, $zip_entry) == FALSE) continue;
+            if (zip_entry_name($zip_entry) != "word/document.xml") continue;
+            $content .= zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
+            zip_entry_close($zip_entry);
+        }// end while
+        zip_close($zip);
+//        error_log("---------------before content----------------------".$content);
+        $dom = new DOMDocument();
+        $dom->loadXML($content);
+//        error_log("---------------DOM content----------------------".print_r($dom,1));
+//        $featuredde1 = $dom->getElementsByTagNameNS('w','drawing');
+//error_log("---------------featuredde1----------------------".print_r($featuredde1,1));
+//        foreach ($featuredde1 as $node) {
+//            $node->parentNode->removeChild($node);
+//        }
+//        $content = $dom->saveXML();
+        $drwPosStrt = strpos($content,"<w:drawing>");
+//        error_log("---------------drwPosStrt----------------------".$drwPosStrt);
+        $drwPosEnd = strpos($content,"</w:drawing>") ;
+//        error_log("---------------drwPosEnd----------------------".$drwPosEnd);
+        $content = substr($content, 0, $drwPosStrt).substr($content, $drwPosEnd) ;
+//        error_log("---------------saveXML----------+++++++------------".$content);
+        $content = str_replace('</w:r></w:p></w:tc><w:tc></w:drawing>', " ", $content);
+        $content = str_replace('</w:r></w:p></w:drawing>', "\r\n", $content);
+        
+        $striped_content = strip_tags($content);
+//error_log("---------------read_docx----------------------".$striped_content);
+        return trim($striped_content);
+    }
+    
+    
+   static function getPPTText($input_file){
+    $zip_handle = new ZipArchive;
+    $output_text = "";
+    if(true === $zip_handle->open($input_file)){
+        $slide_number = 1; //loop through slide files
+        while(($xml_index = $zip_handle->locateName("ppt/slides/slide".$slide_number.".xml")) !== false){
+            $xml_datas = $zip_handle->getFromIndex($xml_index);
+            $xml_handle = new DOMDocument();
+            $xml_handle->loadXML($xml_datas, LIBXML_NOENT | LIBXML_XINCLUDE | LIBXML_NOERROR | LIBXML_NOWARNING);
+            $output_text .= strip_tags($xml_handle->saveXML());
+            $slide_number++;
+        }
+        if($slide_number == 1){
+            $output_text .="";
+        }
+        $zip_handle->close();
+    }else{
+    $output_text .="";
+    }
+    return trim($output_text);
+}
+static function getPDFImages($source){
+    $artifactsTempPath = Yii::app()->params['ArtifactSavePath'];
+            $file = explode("/", $source);
+            $imagesList = array();
+            $filename = explode(".",$file[(sizeof($file) - 1)]);
+//            error_log("command===>"."pdfimages -j ".$source." ".dirname( __FILE__ ) . '/' . "../../temp/tempUploadThumbnails" . '/'.$filename[0] );
+//            $res = exec("pdfimages -j ".$source." ".dirname( __FILE__ ) . '/' . "../../temp/tempUploadThumbnails" . '/'.$filename[0].'_skiptaTemp',$output,$return_var );
+            $res = exec("pdfimages -j ".$source." ".$artifactsTempPath."tempUploadThumbnails" . '/'.$filename[0].'_Temppdf',$output,$return_var );
+//            DocumentProcessor::convertImages($artifactsTempPath."tempUploadThumbnails" . '/'.$filename[0]."_Temppdf*.*");
+            $imagesPPMList = glob($artifactsTempPath."tempUploadThumbnails" . '/'.$filename[0]."_Temppdf*.{ppm,pbm}",GLOB_BRACE);
+            if(count($imagesPPMList) > 0){
+                foreach($imagesPPMList as $image){
+                    unlink($image);
+                }
+            }
+            $imagesList = glob($artifactsTempPath."tempUploadThumbnails" . '/'.$filename[0]."_Temppdf*.{jpg,png,jpeg}",GLOB_BRACE);
+            return $imagesList;
+        }
+         
+static function getPDFText($src){
+    //return PdfParser::parseFile($src);
+    $text = "";
+    if(file_exists($src)){
+         $parser = new \Smalot\PdfParser\Parser();
+          $pdf    = $parser->parseFile($src);
+    $text = $pdf->getText();
+    }
+    return trim($text);
+}
+}
+?>
